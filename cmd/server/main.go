@@ -5,27 +5,69 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"sync"
 )
 
-func Handleroot(w http.ResponseWriter, r *http.Request) {
-	log.Println("'/root' was called")
-
-	w.WriteHeader(http.StatusOK)
+type User struct {
+	Name string `json:"name"`
 }
 
+var userCache map[int]string
+var cacheMutex sync.RWMutex
+
 func main() {
-	fmt.Printf("starting sever")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", RootHandler)
 
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("'/status' was called")
-		w.Header().Set("content-type", "application/json")
+	mux.HandleFunc("POST /user/{id}", CreateUser)
+	mux.HandleFunc("GET /user/{id}", getUser)
+	mux.HandleFunc("DELETE /user/{id}", deleteUser)
+	fmt.Println("starting server at port :8080")
+	log.Fatal(http.ListenAndServe(":8080", mux))
+}
 
-		status := map[string]string{"status": "ok"}
-		_ = json.NewEncoder(w).Encode(status)
-		w.WriteHeader(http.StatusOK)
-		//w.Write([]byte("ok"))
-	})
+func RootHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, World!")
+}
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+func CreateUser(w http.ResponseWriter, r *http.Request) {
+	var user User
+	err := json.NewDecoder(r.Body).Decode(&user)
+	if err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
 
+	userCache[len(userCache)+1] = user.Name
+
+}
+func getUser(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	}
+	cacheMutex.Lock()
+	name, ok := userCache[id]
+	cacheMutex.Unlock()
+	if !ok {
+		http.Error(w, "User not found", http.StatusNotFound)
+	}
+
+	err = json.NewEncoder(w).Encode(map[string]string{"name": name})
+	if err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+
+}
+
+func deleteUser(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	}
+	cacheMutex.Lock()
+	delete(userCache, id)
+	cacheMutex.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
